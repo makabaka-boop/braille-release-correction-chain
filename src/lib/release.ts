@@ -55,13 +55,28 @@ export interface ReleaseSnapshot {
   calibration: ReleaseCalibrationSnapshot;
 }
 
-/** 放行单：独立标识 + 签发时刻 + 不可变来源快照。 */
+/**
+ * 更正关联：补发更正单时固化到新单上的不可变关联数据。
+ *
+ * 原单内容绝不改写——关联只记录在新单上；旧格式存档中的单据没有此字段，
+ * 照常读取（correction 为 undefined）。
+ */
+export interface ReleaseCorrection {
+  /** 非空更正原因（签发前已去除首尾空白并校验非空）。 */
+  reason: string;
+  /** 可选的原单编号；未关联时为 null。绝不等于本单编号（不可自指）。 */
+  supersedesId: string | null;
+}
+
+/** 放行单：独立标识 + 签发时刻 + 不可变来源快照 + 可选的更正关联。 */
 export interface ReleaseSlip {
   /** 独立标识，如 “PF-20260924-093015-ab12cd34”。 */
   id: string;
   /** 签发时刻（ISO 8601 字符串）。 */
   issuedAt: string;
   snapshot: ReleaseSnapshot;
+  /** 更正单才有：更正原因与可选原单编号。普通放行单与旧格式存档没有此字段。 */
+  correction?: ReleaseCorrection;
 }
 
 /** 放行阻断原因类别。 */
@@ -72,10 +87,12 @@ export type ReleaseBlockerKind =
   | 'calibration-adjust'
   | 'calibration-stale'
   | 'calibration-legacy'
-  | 'calibration-protected';
+  | 'calibration-protected'
+  | 'correction-reason-empty'
+  | 'correction-target-invalid';
 
 export interface ReleaseBlocker {
-  scope: 'draft' | 'calibration';
+  scope: 'draft' | 'calibration' | 'correction';
   kind: ReleaseBlockerKind;
   message: string;
 }
@@ -326,12 +343,41 @@ export function isWellFormedSlip(
   if (!isWellFormedDraft(draft) || !isWellFormedCalibration(calibration)) {
     return false;
   }
+  // 更正关联是可选字段：缺失（旧格式存档）照常通过；存在则必须结构完整，
+  // 损坏的关联数据与损坏的快照一样让整张单据不可信。
+  if (slip.correction !== undefined && !isWellFormedCorrection(slip.correction, slip.id)) {
+    return false;
+  }
   if (options.recompute === false) {
     return true;
   }
   // 最关键的一致性：快照内的排版必须能由原文与行宽重新推出，
   // 六点读数必须能重新判定出“合格”，且与逐点视图一致。
   return snapshotRecomputes(snapshot as ReleaseSnapshot);
+}
+
+/**
+ * 校验更正关联结构：非空更正原因；原单编号只能为 null 或非空字符串；
+ * 绝不接受自指（更正单不能指向自己）。
+ */
+export function isWellFormedCorrection(value: unknown, slipId: string): value is ReleaseCorrection {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) {
+    return false;
+  }
+  const correction = value as Record<string, unknown>;
+  if (typeof correction.reason !== 'string' || correction.reason.trim() === '') {
+    return false;
+  }
+  if (
+    correction.supersedesId !== null &&
+    (typeof correction.supersedesId !== 'string' || correction.supersedesId.trim() === '')
+  ) {
+    return false;
+  }
+  if (correction.supersedesId === slipId) {
+    return false;
+  }
+  return true;
 }
 
 function isWellFormedDraft(value: unknown): value is ReleaseDraftSnapshot {

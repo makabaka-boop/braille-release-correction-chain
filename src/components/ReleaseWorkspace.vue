@@ -4,8 +4,15 @@ import {
   createReleaseSlip,
   evaluateReleaseGate,
   type CalibrationGateView,
-  type ReleaseBlocker
+  type ReleaseBlocker,
+  type ReleaseSlip
 } from '../lib/release';
+import {
+  analyzeCorrectionChains,
+  createCorrectionSlip,
+  isInCorrectionChain,
+  type CorrectionChainStatus
+} from '../lib/correction';
 import { useDraftSession } from '../lib/draftSession';
 import { useCalibrationSession } from '../lib/calibrationSession';
 import { useReleaseSession } from '../lib/releaseSession';
@@ -19,6 +26,11 @@ import ReleaseSlipCard from './ReleaseSlipCard.vue';
  * 放行后把单稿与校准固化为不可变快照。历史放行单只读复核，草稿改动立即让
  * 当前可放行状态失效，但不覆盖任何历史单据。当前授权放在单例会话中，
  * 切换模式（本组件卸载重挂）不丢失；刷新页面后才不自动恢复。
+ *
+ * 更正补发：历史单据提供“以此单更正”入口，操作员明确确认后把原单文字与
+ * 行宽带入共享可编辑草稿；更正单必须重新通过同一放行闸门并填写非空更正原因，
+ * 签发后以不可变关联指向原单（原单内容绝不改写）。历史区展示更正链与当前状态，
+ * 跨页签合并出的分叉明确标记冲突并停止自动认定现行版本。
  */
 const draft = useDraftSession();
 const calibration = useCalibrationSession();
@@ -56,6 +68,94 @@ const historySlips = computed(() => archive.value.slips.slice().reverse());
 const latestHistory = computed(() =>
   archive.value.slips.length > 0 ? archive.value.slips[archive.value.slips.length - 1] : null
 );
+
+// ---- 更正补发：确认 → 带入草稿 → 重新过闸门 + 非空原因 → 签发独立编号新单 ----
+/** 等待操作员明确确认的原单（点击“以此单更正”后、确认前）。 */
+const pendingCorrection = ref<ReleaseSlip | null>(null);
+// 更正规程状态放在共享会话里：切到单稿预检页修改文字后回来仍然保持。
+const { correctionTarget, correctionReason } = session;
+
+const correctionReasonEmpty = computed(() => correctionReason.value.trim() === '');
+const canIssueCorrection = computed(
+  () => correctionTarget.value !== null && !correctionReasonEmpty.value && canRelease.value
+);
+
+/** 更正链分析：与领域校验、只追加存档、共享会话同一份关联数据。 */
+const chainInfo = computed(() => analyzeCorrectionChains(archive.value.slips));
+const correctionForks = computed(() => chainInfo.value.forks);
+
+function chainStatusOf(slip: ReleaseSlip): CorrectionChainStatus | null {
+  if (!isInCorrectionChain(chainInfo.value, slip)) {
+    return null;
+  }
+  return chainInfo.value.statusById.get(slip.id) ?? null;
+}
+
+function chainStatusText(slip: ReleaseSlip): string {
+  const status = chainStatusOf(slip);
+  const children = chainInfo.value.childrenById.get(slip.id) ?? [];
+  switch (status) {
+    case 'current':
+      return '更正链现行版本';
+    case 'superseded':
+      return `已被更正单 ${children[0]?.id ?? ''} 取代`;
+    case 'forked':
+      return '更正分叉冲突：不作现行认定';
+    case 'fork-branch':
+      return '分叉分支：不作现行认定';
+    case 'orphan':
+      return '原单编号不在存档中';
+    default:
+      return '';
+  }
+}
+
+/** 点击“以此单更正”：先进入待确认状态，绝不直接改草稿。 */
+function startCorrection(slip: ReleaseSlip) {
+  pendingCorrection.value = slip;
+}
+
+/** 操作员明确确认：把原单文字与行宽带入共享可编辑草稿，进入更正规程。 */
+function confirmCorrection() {
+  const target = pendingCorrection.value;
+  if (!target) {
+    return;
+  }
+  pendingCorrection.value = null;
+  writeError.value = null;
+  session.beginCorrection(target);
+}
+
+function cancelCorrection() {
+  pendingCorrection.value = null;
+  session.cancelCorrection();
+}
+
+function issueCorrection() {
+  const target = correctionTarget.value;
+  if (!target) {
+    return;
+  }
+  writeError.value = null;
+  const created = createCorrectionSlip({
+    text: draft.text.value,
+    rawWidth: draft.width.value,
+    gate: gateView.value,
+    reason: correctionReason.value,
+    supersedesId: target.id
+  });
+  if (!created.ok || !created.slip) {
+    return;
+  }
+  const outcome = session.issue(created.slip);
+  if (!outcome.ok) {
+    // 写入失败 / 保护态：明确告警，原存档保留，不产生伪签发。
+    writeError.value = outcome.error;
+    return;
+  }
+  // 签发成功：退出更正规程，新单成为当前授权并进入历史更正链。
+  session.cancelCorrection();
+}
 
 // 跨标签页放行存档更新时，只依据完整、版本相符的记录恢复历史展示。
 function onReleaseStorage(event: StorageEvent) {
@@ -183,6 +283,46 @@ onMounted(() => {
       放行单存档处于保护态：在修复前不能签发新单据，历史完整记录仍可只读复核。
     </p>
 
+    <section v-if="correctionTarget" class="correction-panel" aria-label="补发更正单" data-testid="correction-panel">
+      <h2>补发更正单</h2>
+      <p class="correction-meta">
+        原单编号：<strong data-testid="correction-target-id">{{ correctionTarget.id }}</strong>
+        （原单内容绝不改写，继续只读保留供换班追溯）。
+      </p>
+      <p class="correction-meta">
+        已把原单文字与行宽带入可编辑草稿：请在“单稿预检”页修正文字或行宽，
+        并确保六点试压重新判定合格；更正单必须重新通过编码、排版与合格试压闸门。
+      </p>
+      <label class="field">
+        <span class="field-label">更正原因（必填）</span>
+        <textarea
+          v-model="correctionReason"
+          rows="2"
+          spellcheck="false"
+          placeholder="填写本次更正的具体原因"
+          data-testid="correction-reason"
+          :class="{ 'input-invalid': correctionReasonEmpty }"
+        ></textarea>
+      </label>
+      <p v-if="correctionReasonEmpty" class="correction-hint" data-testid="correction-reason-hint">
+        更正原因不能为空，填写后才能签发更正单。
+      </p>
+      <div class="correction-actions">
+        <button
+          type="button"
+          class="compare-btn release-issue"
+          data-testid="correction-issue"
+          :disabled="!canIssueCorrection"
+          @click="issueCorrection"
+        >
+          签发更正单
+        </button>
+        <button type="button" class="quick-btn" data-testid="correction-cancel" @click="cancelCorrection">
+          取消更正
+        </button>
+      </div>
+    </section>
+
     <div v-if="activeSlip" class="release-active" role="status" data-testid="release-active">
       <h2>当前可放行：放行单 {{ activeSlip.id }}</h2>
       <p class="release-active-meta">放行依据为本次新完成的合格判定；来源快照如下，可逐项复核。</p>
@@ -213,6 +353,25 @@ onMounted(() => {
 
   <section class="panel release-history" aria-label="历史放行单只读复核">
     <h2>历史放行单（只读复核，{{ historySlips.length }} 份）</h2>
+
+    <div
+      v-if="correctionForks.length > 0"
+      class="correction-fork-warning"
+      role="alert"
+      data-testid="correction-fork-warning"
+    >
+      <h3>更正链存在分叉冲突</h3>
+      <p>
+        以下单据被多张更正单同时指向（可能由多页签同时更正合并产生）：已停止自动认定现行版本，
+        不会仅凭时间先后挑选现行单；全部原件保留取证，请人工核对处理。
+      </p>
+      <ul>
+        <li v-for="fork in correctionForks" :key="fork.parentId" data-testid="correction-fork-item">
+          原单 <strong>{{ fork.parentId }}</strong>：更正单 {{ fork.slipIds.join('、') }} 同时指向它
+        </li>
+      </ul>
+    </div>
+
     <p v-if="historySlips.length === 0" class="history-empty" data-testid="release-history-empty">
       尚无已签发的放行单。
     </p>
@@ -225,7 +384,49 @@ onMounted(() => {
         data-testid="release-history-item"
         :data-slip-id="slip.id"
       >
+        <p
+          v-if="chainStatusOf(slip)"
+          class="chain-status"
+          :class="`chain-${chainStatusOf(slip)}`"
+          data-testid="chain-status"
+        >
+          {{ chainStatusText(slip) }}
+        </p>
         <ReleaseSlipCard :slip="slip" />
+        <div
+          v-if="pendingCorrection?.id === slip.id"
+          class="correction-confirm"
+          role="alertdialog"
+          aria-label="确认发起更正"
+          data-testid="correction-confirm"
+        >
+          <p>
+            确认以放行单 <strong>{{ slip.id }}</strong> 为基础发起更正？
+            原单文字与行宽将带入可编辑草稿（覆盖当前草稿内容），原单内容不会被改写。
+          </p>
+          <div class="correction-actions">
+            <button
+              type="button"
+              class="compare-btn"
+              data-testid="correction-confirm-yes"
+              @click="confirmCorrection"
+            >
+              确认发起更正
+            </button>
+            <button type="button" class="quick-btn" data-testid="correction-confirm-no" @click="cancelCorrection">
+              取消
+            </button>
+          </div>
+        </div>
+        <button
+          v-else
+          type="button"
+          class="quick-btn correction-start"
+          data-testid="correct-with-slip"
+          @click="startCorrection(slip)"
+        >
+          以此单更正
+        </button>
       </li>
     </ol>
   </section>

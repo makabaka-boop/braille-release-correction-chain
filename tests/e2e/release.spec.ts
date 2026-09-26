@@ -441,11 +441,12 @@ test.describe('压点放行：历史只增不减、双页签交错与编号冲�
     expect(new Set(archiveCheck.ids).size).toBe(total);
     expect(archiveCheck.draftTexts).toEqual(texts);
 
-    // 第 1 张可在界面只读复核，内容是最早的原件；中间一张（i=104）同样可查
+    // 第 1 张可在界面只读复核，内容是最早的原件（i=0 签发原文“0，三。”）；
+    // 反序第 100 项对应存档顺序 i=104：数字 4 重复 (104 % 4) + 1 = 1 次，即“4，三。”
     const oldest = page.getByTestId('release-history-item').nth(total - 1);
-    await expect(oldest.getByTestId('slip-draft-text')).toContainText('000，三。');
+    await expect(oldest.getByTestId('slip-draft-text')).toContainText('0，三。');
     await expect(page.getByTestId('release-history-item').nth(100).getByTestId('slip-draft-text')).toContainText(
-      '4444，三。'
+      '4，三。'
     );
 
     // 刷新后全部 205 份仍可只读复核（含最早一张）
@@ -453,7 +454,7 @@ test.describe('压点放行：历史只增不减、双页签交错与编号冲�
     await page.getByTestId('mode-release').click();
     await expect(page.getByTestId('release-history-item')).toHaveCount(total);
     await expect(page.getByTestId('release-history-item').nth(total - 1).getByTestId('slip-draft-text')).toContainText(
-      '000，三。'
+      '0，三。'
     );
   });
 
@@ -518,12 +519,18 @@ test.describe('压点放行：历史只增不减、双页签交错与编号冲�
 
   test('受控相同编号但内容不同：第二次被明确拒绝并告警，历史保留编号原件，当前不成为伪签发', async ({ context }) => {
     // 在页面脚本运行前冻结时间与随机源，使两次签发恰好生成相同编号；
-    // 冻结时间设为未来整点，避免与真实当前秒碰撞。冻结只作用于第一次导航，
-    // 随后用 reload 标记解除。
+    // 冻结只作用于首个 http(s) 文档（跳过 context.newPage 的 about:blank），
+    // 冻结标记留在 sessionStorage 中：随后 reload 时初始化脚本仍会运行，
+    // 但标记已存在即跳过冻结，保证最后一步能用真实时钟签发取得新编号。
     await context.addInitScript(() => {
-      if (window.sessionStorage.getItem('test:freeze-clock') !== '1') {
+      const USED_KEY = 'test:freeze-used';
+      if (location.protocol !== 'http:' && location.protocol !== 'https:') {
         return;
       }
+      if (window.sessionStorage.getItem(USED_KEY) === '1') {
+        return;
+      }
+      window.sessionStorage.setItem(USED_KEY, '1');
       const frozen = new Date('2026-11-15T08:30:00.000Z').getTime();
       class FrozenDate extends Date {
         constructor(...args: unknown[]) {
@@ -544,7 +551,6 @@ test.describe('压点放行：历史只增不减、双页签交错与编号冲�
     });
     const page = await context.newPage();
     await page.goto('/');
-    await page.evaluate(() => window.sessionStorage.setItem('test:freeze-clock', '1'));
 
     await fillDraft(page, '12，三。', '4');
     await judgePass(page);
@@ -570,8 +576,8 @@ test.describe('压点放行：历史只增不减、双页签交错与编号冲�
     // 当前可放行区不把不同内容当作已签发单据
     await expect(page.getByTestId('release-active')).toHaveCount(0);
 
-    // 草稿保持“99，九。”，合格校准存档仍在；解除冻结后重新加载，签发得到新编号
-    await page.evaluate(() => window.sessionStorage.removeItem('test:freeze-clock'));
+    // 草稿保持“99，九。”，合格校准存档仍在；reload 后初始化脚本因“已冻结过”标记
+    // 自动跳过（真实时钟恢复），签发得到新编号
     await page.reload();
     await page.getByTestId('mode-release').click();
     await expect(page.getByTestId('release-issue')).toBeEnabled();

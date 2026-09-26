@@ -4,7 +4,8 @@ import type { ReleaseSlip } from '../lib/release';
 import CellView from './CellView.vue';
 
 /**
- * 放行单卡片：完整展示来源快照（原文、行宽、逐方编码、排版、合格判定、六点读数）。
+ * 放行单卡片：完整展示来源快照（原文、行宽、逐方编码、排版、合格判定、六点读数）
+ * 与更正关联（更正原因、原单编号）。
  * 所有内容只读——快照本身已被领域层递归冻结，组件也不提供任何编辑入口。
  */
 const props = defineProps<{
@@ -29,8 +30,22 @@ void props;
     <header class="slip-head">
       <span class="slip-id" data-testid="slip-id">放行单号：{{ slip.id }}</span>
       <span class="slip-time" data-testid="slip-time">签发时间：{{ formatIssuedAt(slip.issuedAt) }}</span>
-      <span class="slip-badge">不可变快照 · 只读</span>
+      <span v-if="slip.correction" class="slip-badge slip-badge-correction" data-testid="slip-correction-badge">
+        更正单 · 不可变快照 · 只读
+      </span>
+      <span v-else class="slip-badge">不可变快照 · 只读</span>
     </header>
+
+    <section v-if="slip.correction" class="slip-section slip-correction" data-testid="slip-correction">
+      <h4>更正关联（不可变）</h4>
+      <p class="slip-correction-reason" data-testid="slip-correction-reason">
+        更正原因：{{ slip.correction.reason }}
+      </p>
+      <p class="slip-correction-target" data-testid="slip-correction-target">
+        <template v-if="slip.correction.supersedesId">更正原单：{{ slip.correction.supersedesId }}</template>
+        <template v-else>未关联原单编号</template>
+      </p>
+    </section>
 
     <section class="slip-section slip-source">
       <h4>来源快照 · 单稿</h4>

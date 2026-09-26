@@ -1028,3 +1028,129 @@ input[type='number'].input-invalid:focus,
   line-height: 1.7;
   font-weight: 700;
 }
+
+/* ---- 更正补发 ---- */
+.correction-panel {
+  margin-top: 16px;
+  padding: 14px 16px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.correction-panel h2 {
+  margin: 0 0 8px;
+  font-size: 16px;
+  color: var(--accent);
+}
+
+.correction-meta {
+  margin: 0 0 8px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.correction-hint {
+  margin: 6px 0 0;
+  color: var(--danger);
+  font-size: 13px;
+}
+
+.correction-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.correction-confirm {
+  margin-top: 10px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+}
+
+.correction-confirm p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.correction-start {
+  margin-top: 8px;
+}
+
+.correction-fork-warning {
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 1px solid #f0b4ae;
+  border-radius: 8px;
+  background: var(--danger-soft);
+}
+
+.correction-fork-warning h3 {
+  margin: 0 0 6px;
+  font-size: 15px;
+  color: var(--danger);
+}
+
+.correction-fork-warning p {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.correction-fork-warning ul {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+  line-height: 1.7;
+}
+
+.chain-status {
+  display: inline-block;
+  margin: 0 0 8px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.chain-current {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.chain-superseded {
+  background: #eef1f6;
+  color: var(--muted);
+}
+
+.chain-forked,
+.chain-fork-branch {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.chain-orphan {
+  background: #fff4e0;
+  color: #9a6200;
+}
+
+.slip-badge-correction {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.slip-correction {
+  border-left: 3px solid var(--danger);
+  padding-left: 10px;
+}
+
+.slip-correction-reason,
+.slip-correction-target {
+  margin: 0 0 4px;
+  font-size: 13px;
+  line-height: 1.7;
+}

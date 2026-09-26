@@ -7,6 +7,10 @@
  *  - 但在同一页面切换模式（放行页被卸载又重新挂载）时保持，
  *    这样回到放行页仍能看到当前可放行状态；
  *  - 单稿文字、行宽或任一校准读数 / 结论变化时立即失效。
+ *
+ * 更正规程（已确认的原单、更正原因草稿）同样放在会话里：
+ * 操作员确认“以此单更正”后需要切到单稿预检页修改文字，更正状态必须在
+ * 放行页卸载重挂后仍然保持；刷新页面则更正规程不恢复，历史单据不受影响。
  */
 import { effectScope, ref, watch, type Ref } from 'vue';
 import type { ReleaseSlip } from './release';
@@ -32,6 +36,17 @@ export interface ReleaseSession {
   activeSlip: Ref<ReleaseSlip | null>;
   /** 最近被失效的单据（用于明确提示改动后授权已失效）。 */
   invalidatedSlip: Ref<ReleaseSlip | null>;
+  /** 已确认发起更正的原单；null 表示当前不在更正规程。刷新后不保留。 */
+  correctionTarget: Ref<ReleaseSlip | null>;
+  /** 更正原因草稿：随会话保持（切换模式不丢失），刷新后不保留。 */
+  correctionReason: Ref<string>;
+  /**
+   * 操作员明确确认后进入更正规程：把原单文字与行宽带入共享可编辑草稿，
+   * 并记录更正关联的原单。原单内容绝不改写。
+   */
+  beginCorrection: (slip: ReleaseSlip) => void;
+  /** 退出更正规程（取消或签发成功后）；不影响已带入的草稿内容。 */
+  cancelCorrection: () => void;
   issue: (slip: ReleaseSlip) => IssueOutcome;
   reloadArchive: () => void;
 }
@@ -54,9 +69,24 @@ export function useReleaseSession(): ReleaseSession {
     const archive = ref(loadReleaseState());
     const activeSlip = ref<ReleaseSlip | null>(null);
     const invalidatedSlip = ref<ReleaseSlip | null>(null);
+    const correctionTarget = ref<ReleaseSlip | null>(null);
+    const correctionReason = ref('');
 
     function reloadArchive() {
       archive.value = loadReleaseState();
+    }
+
+    function beginCorrection(slip: ReleaseSlip) {
+      correctionTarget.value = slip;
+      correctionReason.value = '';
+      // 原单文字与行宽带入共享可编辑草稿（草稿改动同时让当前授权立即失效）。
+      draft.text.value = slip.snapshot.draft.text;
+      draft.width.value = String(slip.snapshot.draft.width);
+    }
+
+    function cancelCorrection() {
+      correctionTarget.value = null;
+      correctionReason.value = '';
     }
 
     function issue(slip: ReleaseSlip): IssueOutcome {
@@ -89,7 +119,17 @@ export function useReleaseSession(): ReleaseSession {
       { deep: true }
     );
 
-    return { archive, activeSlip, invalidatedSlip, issue, reloadArchive };
+    return {
+      archive,
+      activeSlip,
+      invalidatedSlip,
+      correctionTarget,
+      correctionReason,
+      beginCorrection,
+      cancelCorrection,
+      issue,
+      reloadArchive
+    };
   }) as ReleaseSession;
   return singleton;
 }
